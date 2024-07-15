@@ -1,0 +1,82 @@
+
+# File: simple-param.yml
+parameters:
+- name: serviceConnection # name of the parameter; required
+  type: string # data type of the parameter; required
+- name: apimOpsServiceConnection # name of the parameter; required
+  type: string # data type of the parameter; required
+  default: ''
+- name: environment # name of the parameter; required
+  type: string # data type of the parameter; required
+  default: 'dev'
+- name: projectName # name of the parameter; required
+  type: string # data type of the parameter; required
+  default: ''
+
+steps:
+
+
+- task: SqlAzureDacpacDeployment@1
+  displayName: 'Azure SQL $(projectName)'
+  inputs:
+    azureConnectionType:  'ConnectedServiceNameARM'
+    azureSubscription: '${{ parameters.serviceConnection }}'
+    AuthenticationType: servicePrincipal
+    ServerName: 'sql-${{ parameters.environment }}-$(projectName)-001.database.windows.net'
+    DatabaseName: 'sqldb-${{ parameters.environment }}-$(projectName)-001'
+    deployType: SqlTask
+    SqlFile: '$(Pipeline.Workspace)/drop/ApplicationDb.sql'
+
+
+- task: AzureRmWebAppDeployment@4
+  displayName: 'Azure App Service Deploy: web-$(environment)-$(projectName)'
+  inputs:
+    azureSubscription: '${{ parameters.serviceConnection }}'
+    WebAppName: 'web-${{ parameters.environment }}-$(projectName)-001'
+    packageForLinux: '$(Pipeline.Workspace)/drop/WebUI.zip'
+  enabled: true
+
+- task: AzureAppServiceSettings@1
+  displayName: 'Azure App Service Settings: web-dev-$(projectName)-001'
+  inputs:
+    azureSubscription: '${{ parameters.serviceConnection }}'
+    appName: 'web-${{ parameters.environment }}-$(projectName)-001'
+    resourceGroupName: 'rg-${{ parameters.environment }}-$(projectName)-001'
+    appSettings: |
+     [
+     {
+     "name": "AzureAd__ApplicationId",
+     "value": "$(AzureAd__ApplicationId)",
+     "slotSettings": false
+     },
+     {
+     "name": "AzureAd__ClientId",
+     "value": "$(AzureAd__ClientId)",
+     "slotSetting": false
+     },
+     {
+     "name": "AzureAd__Instance",
+     "value": "https://login.microsoftonline.com/",
+     "slotSetting": false
+     },
+     {
+     "name": "AzureAd__TenantId",
+     "value": "$(AzureAd__TenantId)",
+     "slotSetting": false
+     }
+     ]
+
+
+# - task: PowerShell@2
+  # inputs:
+   # targetType: 'filePath'
+   # displayName: 'Replace APIM Tokens'
+   # filePath: $(Pipeline.Workspace)/drop/.azure-devops/replace-tokens.ps1 
+   # arguments: > 
+    # -InputFile  $(Pipeline.Workspace)/drop/.azure-devops/apim-ops/products/default/policy.xml      
+    # -OutputFile $(Pipeline.Workspace)/drop/.azure-devops/apim-ops/products/default/policy-tokenized.xml
+    # -Tokens @{AzureAD_ClientId="$(AzureAD__ClientId)";BackendUrl="$(BackendUrl)"}
+    # -StartTokenPattern "##"
+    # -EndTokenPattern "##"
+
+

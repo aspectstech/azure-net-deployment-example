@@ -1,0 +1,139 @@
+resources:
+
+# ASP.NET Core (.NET Framework)
+# Build and test ASP.NET Core projects targeting the full .NET Framework.
+# Add steps that publish symbols, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+- develop
+- main
+variables:
+  solution: 'codicoach.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+  dotNetFramework: 'net7.0'
+  dotNetVersion: '7.0.x'
+  projectName: '(Insert a global unique name)'
+  isMain: $[eq(variables['Build.SourceBranch'],'ref/heads/main')]
+stages:
+- stage: Build
+  jobs: 
+  - job: Build_Test_Publish
+    pool:
+     vmImage: 'windows-latest'
+
+    steps:
+    - task: NuGetToolInstaller@1
+    - task: UseDotNet@2
+      displayName: 'Use .NET Core sdk'
+      inputs:
+        packageType: 'sdk'
+        version: '7.0.x'
+        includePreviewVersions: true
+
+    - task: UseDotNet@2
+      inputs:
+        version: $(dotNetVersion)
+        includePreviewVersions: true
+    - script: dotnet restore $(solution)
+      displayName: 'Restore API'
+
+    - task: UseDotNet@2
+      inputs:
+        version: $(dotNetVersion)
+        includePreviewVersions: true
+    - script: dotnet build $(solution)  --configuration $(buildConfiguration) --no-restore
+      displayName: 'Build .NET * Application'
+
+    #Generate EF Core script
+
+    - task: UseDotNet@2
+      displayName: Install dotnet-ef
+      inputs:
+        version: $(dotNetVersion)
+        includePreviewVersions: true
+    - script: dotnet tool install --global dotnet-ef
+
+
+    - task: UseDotNet@2
+      displayName: Create codicoach SQL Scripts
+      inputs:
+        version: $(dotNetVersion)
+        includePreviewVersions: true
+    - script: dotnet ef migrations script  --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/ApplicationDb.sql --idempotent  --no-build --startup-project $(Build.SourcesDirectory)/src/WebUI/WebUI.csproj --project $(Build.SourcesDirectory)/src/Infrastructure/Infrastructure.csproj --context ApplicationDbContext
+    
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: publish
+        publishWebProjects: True
+        arguments: '--configuration $(buildConfiguration) --framework $(dotNetFramework)  --output $(Build.ArtifactStagingDirectory)'
+        zipAfterPublish: True
+
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)/src/WebUI/wwwroot/api' 
+        Contents: 'specification.json' 
+        TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)/.azure-devops' 
+        Contents: '**' 
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/.azure-devops'
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+- stage: DeployDev
+  variables: 
+  - group:  ${{variables.projectName}}-dev
+  - name: 'projectName'
+    value: '(Insert a global unique name)'
+  - name: BackendUrl
+    value: "https://web-dev-${{ variables.projectName }}-001.azurewebsites.net"
+
+  jobs:
+  - deployment: 'Deploy_to_development'
+    environment: ${{variables.projectName}}-dev
+    pool:
+      name: Default
+    strategy:
+     runOnce:
+      deploy:
+       steps:
+       - template: ./deploy-webapp.yml
+         parameters:
+           serviceConnection: 'Resource Group | rg-dev-${{ variables.projectName }}-001'
+           environment: 'dev'
+           projectName: ${{variables.projectName}}
+           apimOpsServiceConnection: 'apim-${{ variables.projectName }}-dev'
+
+- stage: DeployProd
+  condition: and(succeeded(),eq(variables.isMain,'true'))
+  dependsOn: DeployDev
+  variables: 
+  - group:  ${{variables.projectName}}-prd
+  - name: 'projectName'
+    value: '(Insert a global unique name)'
+  - name: BackendUrl
+    value: "https://web-prd-${{ variables.projectName }}-001.azurewebsites.net"
+
+  jobs:
+  - deployment: 'Deploy_to_development'
+    environment: ${{variables.projectName}}-prd
+    pool:
+      name: Default
+    strategy:
+     runOnce:
+      deploy:
+       steps:
+       - template: ./deploy-webapp.yml
+         parameters:
+           serviceConnection: 'Resource Group | rg-dev-${{ variables.projectName }}-001'
+           environment: 'tst'
+           projectName: ${{variables.projectName}}
+           apimOpsServiceConnection: 'apim-${{ variables.projectName }}-dev'
